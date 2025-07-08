@@ -61,6 +61,11 @@ function autenticar(req, res, next) {
   });
 }
 
+app.get("/", (req, res) => {
+  res.send("API do ChatBox está online 🚀");
+});
+
+
 // Login com Google
 app.post("/api/usuarios/google", (req, res) => {
   const { nome, email, photo } = req.body;
