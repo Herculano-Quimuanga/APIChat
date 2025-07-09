@@ -5,13 +5,19 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import axios from "axios";
+import { Configuration, OpenAIApi } from "openai";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Configuração da OpenAI
+const configuration = new Configuration({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+const openai = new OpenAIApi(configuration);
 
 // Conexão com banco de dados
 const connection = mysql.createConnection({
@@ -37,7 +43,6 @@ function gerarToken(usuarioId) {
 function autenticar(req, res, next) {
   const authHeader = req.headers.authorization;
   const token = authHeader?.split(" ")[1];
-
   if (!token) return res.status(401).json({ error: "Token ausente" });
 
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
@@ -50,21 +55,13 @@ function autenticar(req, res, next) {
 // Função para gerar resposta com OpenAI
 async function gerarRespostaOpenAI(pergunta) {
   try {
-    const resposta = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-3.5-turbo",
-        messages: [{ role: "user", content: pergunta }],
-        temperature: 0.7,
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
-      }
-    );
-    return resposta.data.choices[0].message.content;
+    const completion = await openai.createChatCompletion({
+      model: "gpt-3.5-turbo",
+      messages: [{ role: "user", content: pergunta }],
+      temperature: 0.7,
+    });
+
+    return completion.data.choices[0].message.content;
   } catch (error) {
     console.error("Erro na OpenAI:", error.response?.data || error.message);
     throw new Error("Erro ao gerar resposta com OpenAI");
@@ -223,12 +220,10 @@ app.post("/api/chat", async (req, res) => {
       }
     );
   } catch (error) {
-    res
-      .status(500)
-      .json({
-        error: "Erro ao gerar resposta com OpenAI",
-        details: error.message,
-      });
+    res.status(500).json({
+      error: "Erro ao gerar resposta com OpenAI",
+      details: error.message,
+    });
   }
 });
 
@@ -255,6 +250,7 @@ app.get("/api/chat/:userId", (req, res) => {
   );
 });
 
+// Iniciar servidor
 app.listen(3000, () => {
   console.log("Servidor rodando na porta 3000");
 });
