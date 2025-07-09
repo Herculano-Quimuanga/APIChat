@@ -5,19 +5,16 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { Configuration, OpenAIApi } from "openai";
+import OpenAI from "openai";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// Configuração da OpenAI
-const configuration = new Configuration({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const openai = new OpenAIApi(configuration);
 
 // Conexão com banco de dados
 const connection = mysql.createConnection({
@@ -55,13 +52,12 @@ function autenticar(req, res, next) {
 // Função para gerar resposta com OpenAI
 async function gerarRespostaOpenAI(pergunta) {
   try {
-    const completion = await openai.createChatCompletion({
+    const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: pergunta }],
       temperature: 0.7,
     });
-
-    return completion.data.choices[0].message.content;
+    return completion.choices[0].message.content;
   } catch (error) {
     console.error("Erro na OpenAI:", error.response?.data || error.message);
     throw new Error("Erro ao gerar resposta com OpenAI");
