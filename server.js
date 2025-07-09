@@ -1,11 +1,12 @@
 // backend/server.js
-require("dotenv").config();
 import express from "express";
 import mysql from "mysql2";
 import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import dotenv from 'dotenv';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 console.log(
   // eslint-disable-next-line no-undef
@@ -15,7 +16,7 @@ console.log(
 const app = express();
 app.use(cors());
 app.use(express.json());
-
+dotenv.config();
 // Conexão com banco de dados
 const connection = mysql.createConnection({
   // eslint-disable-next-line no-undef
@@ -200,7 +201,6 @@ app.get("/api/usuarios/me", autenticar, (req, res) => {
   );
 });
 
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Enviar mensagem e obter resposta da IA
