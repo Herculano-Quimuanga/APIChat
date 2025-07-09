@@ -10,7 +10,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 dotenv.config();
 console.log(
   // eslint-disable-next-line no-undef
-  "Chave da genAI:",process.env.GEMINI_API_KEY ? "Carregada" : "Não encontrada"
+  "Chave da genAI:",
+  process.env.GEMINI_API_KEY ? "Carregada" : "Não encontrada"
 );
 const app = express();
 app.use(cors());
@@ -65,7 +66,6 @@ app.get("/", (req, res) => {
   res.send("API do ChatBox está online");
 });
 
-
 // Login com Google
 app.post("/api/usuarios/google", (req, res) => {
   const { nome, email, photo } = req.body;
@@ -78,7 +78,12 @@ app.post("/api/usuarios/google", (req, res) => {
     "SELECT * FROM users WHERE email = ?",
     [email],
     (err, results) => {
-      if (err) return res.status(500).json({ error: "Erro no banco de dados",details: err.message });
+      if (err) {
+        console.error("Erro no banco (Google):", err);
+        return res
+          .status(500)
+          .json({ error: "Erro no banco de dados", details: err.message });
+      }
 
       if (results.length > 0) {
         const token = gerarToken(results[0].id);
@@ -119,7 +124,12 @@ app.post("/api/usuarios/register", async (req, res) => {
     "SELECT * FROM users WHERE email = ?",
     [email],
     (err, results) => {
-      if (err) return res.status(500).json({ error: "Erro no banco de dados", details: err.message });
+      if (err) {
+        console.error("Erro no banco:", err);
+        return res
+          .status(500)
+          .json({ error: "Erro no banco de dados", details: err.message });
+      }
       if (results.length > 0)
         return res.status(400).json({ error: "Email já cadastrado" });
 
@@ -153,7 +163,12 @@ app.post("/api/usuarios/login", (req, res) => {
     "SELECT * FROM users WHERE email = ?",
     [email],
     async (err, results) => {
-      if (err) return res.status(500).json({ error: "Erro no banco de dados" });
+      if (err) {
+        console.error("Erro no banco:", err);
+        return res
+          .status(500)
+          .json({ error: "Erro no banco de dados", details: err.message });
+      }
       if (results.length === 0)
         return res.status(404).json({ error: "Usuário não encontrado" });
 
@@ -177,7 +192,10 @@ app.get("/api/usuarios/me", autenticar, (req, res) => {
     "SELECT id, nome, email, photo FROM users WHERE id = ?",
     [id],
     (err, results) => {
-      if (err) return res.status(500).json({ error: "Erro ao buscar usuário", details: err.message });
+      if (err)
+        return res
+          .status(500)
+          .json({ error: "Erro ao buscar usuário", details: err.message });
       if (results.length === 0)
         return res.status(404).json({ error: "Usuário não encontrado" });
       res.status(200).json({ user: results[0] });
@@ -206,14 +224,21 @@ app.post("/api/chat", async (req, res) => {
       [user_id, mensagem, resposta],
       (err) => {
         if (err)
-          return res.status(500).json({ error: "Erro ao salvar no banco", details: err.message });
+          return res
+            .status(500)
+            .json({ error: "Erro ao salvar no banco", details: err.message });
 
         return res.status(200).json({ resposta });
       }
     );
   } catch (error) {
     console.error("Erro na Gemini:", error);
-    res.status(500).json({ error: "Erro ao gerar resposta com Gemini", details: err.message });
+    res
+      .status(500)
+      .json({
+        error: "Erro ao gerar resposta com Gemini",
+        details: err.message,
+      });
   }
 });
 app.get("/api/chat/:userId", (req, res) => {
@@ -224,7 +249,9 @@ app.get("/api/chat/:userId", (req, res) => {
     [userId],
     (err, results) => {
       if (err)
-        return res.status(500).json({ error: "Erro ao buscar mensagens", details: err.message });
+        return res
+          .status(500)
+          .json({ error: "Erro ao buscar mensagens", details: err.message });
 
       const historico = [];
       results.forEach((row) => {
