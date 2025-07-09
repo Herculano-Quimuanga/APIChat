@@ -78,7 +78,7 @@ app.post("/api/usuarios/google", (req, res) => {
     "SELECT * FROM users WHERE email = ?",
     [email],
     (err, results) => {
-      if (err) return res.status(500).json({ error: "Erro no banco de dados" });
+      if (err) return res.status(500).json({ error: "Erro no banco de dados",details: err.message });
 
       if (results.length > 0) {
         const token = gerarToken(results[0].id);
@@ -119,7 +119,7 @@ app.post("/api/usuarios/register", async (req, res) => {
     "SELECT * FROM users WHERE email = ?",
     [email],
     (err, results) => {
-      if (err) return res.status(500).json({ error: "Erro no banco de dados" });
+      if (err) return res.status(500).json({ error: "Erro no banco de dados", details: err.message });
       if (results.length > 0)
         return res.status(400).json({ error: "Email já cadastrado" });
 
@@ -177,7 +177,7 @@ app.get("/api/usuarios/me", autenticar, (req, res) => {
     "SELECT id, nome, email, photo FROM users WHERE id = ?",
     [id],
     (err, results) => {
-      if (err) return res.status(500).json({ error: "Erro ao buscar usuário" });
+      if (err) return res.status(500).json({ error: "Erro ao buscar usuário", details: err.message });
       if (results.length === 0)
         return res.status(404).json({ error: "Usuário não encontrado" });
       res.status(200).json({ user: results[0] });
@@ -206,14 +206,14 @@ app.post("/api/chat", async (req, res) => {
       [user_id, mensagem, resposta],
       (err) => {
         if (err)
-          return res.status(500).json({ error: "Erro ao salvar no banco" });
+          return res.status(500).json({ error: "Erro ao salvar no banco", details: err.message });
 
         return res.status(200).json({ resposta });
       }
     );
   } catch (error) {
     console.error("Erro na Gemini:", error);
-    res.status(500).json({ error: "Erro ao gerar resposta com Gemini" });
+    res.status(500).json({ error: "Erro ao gerar resposta com Gemini", details: err.message });
   }
 });
 app.get("/api/chat/:userId", (req, res) => {
@@ -224,7 +224,7 @@ app.get("/api/chat/:userId", (req, res) => {
     [userId],
     (err, results) => {
       if (err)
-        return res.status(500).json({ error: "Erro ao buscar mensagens" });
+        return res.status(500).json({ error: "Erro ao buscar mensagens", details: err.message });
 
       const historico = [];
       results.forEach((row) => {
