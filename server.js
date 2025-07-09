@@ -6,7 +6,6 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 console.log(
   // eslint-disable-next-line no-undef
