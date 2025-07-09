@@ -10,7 +10,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 dotenv.config();
 console.log(
   // eslint-disable-next-line no-undef
-  "🔑 Chave da genAI:",process.env.GEMINI_API_KEY ? "✅ Carregada" : "❌ Não encontrada"
+  "Chave da genAI:",process.env.GEMINI_API_KEY ? "Carregada" : "Não encontrada"
 );
 const app = express();
 app.use(cors());
@@ -62,7 +62,7 @@ function autenticar(req, res, next) {
 }
 
 app.get("/", (req, res) => {
-  res.send("API do ChatBox está online 🚀");
+  res.send("API do ChatBox está online");
 });
 
 
@@ -192,7 +192,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    console.log("➡️ Gemini - mensagem recebida:", mensagem);
+    console.log("Gemini - mensagem recebida:", mensagem);
 
     const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
@@ -212,7 +212,7 @@ app.post("/api/chat", async (req, res) => {
       }
     );
   } catch (error) {
-    console.error("❌ Erro na Gemini:", error);
+    console.error("Erro na Gemini:", error);
     res.status(500).json({ error: "Erro ao gerar resposta com Gemini" });
   }
 });
