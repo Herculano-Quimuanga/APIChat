@@ -1,4 +1,5 @@
 // backend/server.js
+require("dotenv").config();
 import express from "express";
 import mysql from "mysql2";
 import cors from "cors";
@@ -7,7 +8,6 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-dotenv.config();
 console.log(
   // eslint-disable-next-line no-undef
   "Chave da genAI:",
@@ -16,8 +16,6 @@ console.log(
 const app = express();
 app.use(cors());
 app.use(express.json());
-// eslint-disable-next-line no-undef
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Conexão com banco de dados
 const connection = mysql.createConnection({
@@ -202,6 +200,11 @@ app.get("/api/usuarios/me", autenticar, (req, res) => {
     }
   );
 });
+
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// Enviar mensagem e obter resposta da IA
 app.post("/api/chat", async (req, res) => {
   const { user_id, mensagem } = req.body;
 
@@ -210,37 +213,39 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    console.log("Gemini - mensagem recebida:", mensagem);
+    console.log(" Mensagem recebida do usuário:", mensagem);
 
     const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
     const result = await model.generateContent(mensagem);
-    const response = await result.response;
-    const resposta = response.text();
+    const resposta = result.response.text();
 
-    // Salvar no banco de dados
+    //  Salvar pergunta e resposta no banco
     connection.query(
       "INSERT INTO sms (user_id, mensagem, resposta) VALUES (?, ?, ?)",
       [user_id, mensagem, resposta],
       (err) => {
-        if (err)
-          return res
-            .status(500)
-            .json({ error: "Erro ao salvar no banco", details: err.message });
+        if (err) {
+          console.error(" Erro ao salvar no banco:", err);
+          return res.status(500).json({
+            error: "Erro ao salvar no banco de dados",
+            details: err.message,
+          });
+        }
 
         return res.status(200).json({ resposta });
       }
     );
-  } catch (error) {
-    console.error("Erro na Gemini:", error);
-    res
-      .status(500)
-      .json({
-        error: "Erro ao gerar resposta com Gemini",
-        details: err.message,
-      });
+  } catch (err) {
+    console.error(" Erro ao gerar resposta com Gemini:", err);
+    return res.status(500).json({
+      error: "Erro ao gerar resposta com Gemini",
+      details: err.message,
+    });
   }
 });
+
+// Buscar histórico de conversas por usuário
 app.get("/api/chat/:userId", (req, res) => {
   const userId = req.params.userId;
 
@@ -248,21 +253,27 @@ app.get("/api/chat/:userId", (req, res) => {
     "SELECT mensagem, resposta FROM sms WHERE user_id = ? ORDER BY data_envio ASC",
     [userId],
     (err, results) => {
-      if (err)
-        return res
-          .status(500)
-          .json({ error: "Erro ao buscar mensagens", details: err.message });
+      if (err) {
+        console.error(" Erro ao buscar mensagens:", err);
+        return res.status(500).json({
+          error: "Erro ao buscar mensagens",
+          details: err.message,
+        });
+      }
 
-      const historico = [];
-      results.forEach((row) => {
-        historico.push({ sender: "user", text: row.mensagem });
-        if (row.resposta) historico.push({ sender: "ia", text: row.resposta });
+      const historico = results.flatMap((row) => {
+        const blocos = [{ sender: "user", text: row.mensagem }];
+        if (row.resposta) {
+          blocos.push({ sender: "ia", text: row.resposta });
+        }
+        return blocos;
       });
 
-      res.json(historico);
+      return res.status(200).json(historico);
     }
   );
 });
+
 app.listen(3000, () => {
   console.log("Servidor rodando na porta 3000");
 });
