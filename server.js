@@ -5,16 +5,13 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 // Conexão com banco de dados
 const connection = mysql.createConnection({
@@ -28,6 +25,23 @@ connection.connect((err) => {
   if (err) return console.error("Erro ao conectar ao banco:", err);
   console.log("Conectado ao banco de dados MySQL");
 });
+
+// Inicializa a IA Gemini
+const IA_GEMINI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+// Função para gerar resposta com Gemini 2.5 Flash
+async function gerarRespostaGemini(pergunta) {
+  try {
+    const response = await IA_GEMINI.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [{ role: "user", parts: [{ text: pergunta }] }],
+    });
+    return response.text();
+  } catch (error) {
+    console.error("Erro na Gemini:", error);
+    throw new Error("Erro ao gerar resposta com Gemini");
+  }
+}
 
 // Gera token JWT
 function gerarToken(usuarioId) {
@@ -49,24 +63,9 @@ function autenticar(req, res, next) {
   });
 }
 
-// Função para gerar resposta com OpenAI
-async function gerarRespostaOpenAI(pergunta) {
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [{ role: "user", content: pergunta }],
-      temperature: 0.7,
-    });
-    return completion.choices[0].message.content;
-  } catch (error) {
-    console.error("Erro na OpenAI:", error.response?.data || error.message);
-    throw new Error("Erro ao gerar resposta com OpenAI");
-  }
-}
-
 // Rota de status
 app.get("/", (req, res) => {
-  res.send("API do ChatBox está online");
+  res.send("API do ChatBox está online com Gemini 2.5");
 });
 
 // Login com Google
@@ -194,14 +193,14 @@ app.get("/api/usuarios/me", autenticar, (req, res) => {
   );
 });
 
-// Enviar mensagem para IA
+// Enviar mensagem para IA Gemini
 app.post("/api/chat", async (req, res) => {
   const { user_id, mensagem } = req.body;
   if (!user_id || !mensagem)
     return res.status(400).json({ error: "Dados incompletos" });
 
   try {
-    const resposta = await gerarRespostaOpenAI(mensagem);
+    const resposta = await gerarRespostaGemini(mensagem);
 
     connection.query(
       "INSERT INTO sms (user_id, mensagem, resposta) VALUES (?, ?, ?)",
@@ -217,7 +216,7 @@ app.post("/api/chat", async (req, res) => {
     );
   } catch (error) {
     res.status(500).json({
-      error: "Erro ao gerar resposta com OpenAI",
+      error: "Erro ao gerar resposta com Gemini",
       details: error.message,
     });
   }
@@ -247,6 +246,7 @@ app.get("/api/chat/:userId", (req, res) => {
 });
 
 // Iniciar servidor
-app.listen(3000, () => {
-  console.log("Servidor rodando na porta 3000");
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
