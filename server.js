@@ -36,7 +36,8 @@ async function gerarRespostaGemini(pergunta) {
       model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: pergunta }] }],
     });
-    return response.text();
+
+    return response.text || "Sem resposta da IA no momento. Tente novamente mais tarde, Obrigado!";
   } catch (error) {
     console.error("Erro na Gemini:", error);
     throw new Error("Erro ao gerar resposta com Gemini");
