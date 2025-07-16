@@ -161,7 +161,7 @@ app.post("/api/chat", async (req, res) => {
     const resposta = await gerarRespostaGemini(mensagem);
 
     await pool.query(
-      "INSERT INTO sms (user_id, mensagem, resposta) VALUES (?, ?, ?)",
+      "INSERT INTO mensagens (user_id, mensagem, resposta) VALUES (?, ?, ?)",
       [user_id, mensagem, resposta]
     );
 
@@ -176,7 +176,7 @@ app.get("/api/chat/:userId", async (req, res) => {
 
   try {
     const [results] = await pool.query(
-      "SELECT mensagem, resposta FROM sms WHERE user_id = ? ORDER BY data_envio ASC",
+      "SELECT mensagem, resposta FROM mensagens WHERE user_id = ? ORDER BY data_envio ASC",
       [userId]
     );
 
