@@ -1,7 +1,7 @@
 import express from "express";
-import mysql from "mysql2/promise";
 import cors from "cors";
 import dotenv from "dotenv";
+import mysql from "mysql2/promise";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { GoogleGenAI } from "@google/genai";
@@ -9,18 +9,25 @@ import { GoogleGenAI } from "@google/genai";
 dotenv.config();
 
 /* ------------------------------------------------------------------ */
-/* Configuração de CORS                                                */
+/* App                                                                */
+/* ------------------------------------------------------------------ */
+const app = express();
+
+/* ------------------------------------------------------------------ */
+/* CORS robusto                                                        */
 /* ------------------------------------------------------------------ */
 const allowedOrigins = [
   process.env.FRONTEND_URL?.trim(),
   "http://localhost:5173",
   "http://localhost:3000",
-].filter(Boolean); // remove undefined
+].filter(Boolean);
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true); // ex: curl
+    // Requests sem origin (curl, Postman) → permite
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
+    console.warn(`⚠️ Origin bloqueada pelo CORS: ${origin}`);
     return callback(new Error(`Origin não permitida: ${origin}`));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -29,11 +36,10 @@ const corsOptions = {
   optionsSuccessStatus: 200,
 };
 
-const app = express();
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // responde preflight
+app.options("*", cors(corsOptions)); // responde preflight automaticamente
 
-// Middleware defensivo extra (garante cabeçalhos mesmo em erros)
+// Middleware defensivo: injeta cabeçalhos sempre (inclusive erros)
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.includes(origin)) {
@@ -49,7 +55,9 @@ app.use((req, res, next) => {
     "Access-Control-Allow-Methods",
     "GET, POST, PUT, PATCH, DELETE, OPTIONS"
   );
-  if (req.method === "OPTIONS") return res.sendStatus(200);
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
   next();
 });
 
@@ -69,6 +77,7 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
+// Log inicial de conexão
 (async () => {
   try {
     const c = await pool.getConnection();
@@ -106,7 +115,7 @@ async function gerarRespostaGemini(pergunta) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Usuário IA (criado automaticamente)                                 */
+/* Usuário IA                                                          */
 /* ------------------------------------------------------------------ */
 const AI_USER_EMAIL = process.env.AI_USER_EMAIL || "chatbox-ai@system.local";
 const AI_USER_NAME = process.env.AI_USER_NAME || "ChatBox AI";
@@ -123,7 +132,7 @@ async function ensureAIUser() {
     AI_USER_ID = rows[0].id;
     return AI_USER_ID;
   }
-  // senha dummy
+  // senha dummy como requerido pelo schema (NOT NULL)
   const hashed = await bcrypt.hash("ai-system", 10);
   const [insert] = await pool.query(
     "INSERT INTO users (nome, email, senha, photo) VALUES (?, ?, ?, ?)",
@@ -159,7 +168,6 @@ function autenticar(req, res, next) {
 /* ------------------------------------------------------------------ */
 /* Helpers de conversa                                                 */
 /* ------------------------------------------------------------------ */
-// Conversa IA única por usuário
 async function getOrCreateIAConversation(userId) {
   const [rows] = await pool.query(
     "SELECT id FROM conversas WHERE usuario1_id = ? AND eh_ia = TRUE LIMIT 1",
@@ -167,7 +175,6 @@ async function getOrCreateIAConversation(userId) {
   );
   if (rows.length > 0) return rows[0].id;
 
-  // garante IA user
   if (!AI_USER_ID) await ensureAIUser();
 
   const [insert] = await pool.query(
@@ -177,7 +184,6 @@ async function getOrCreateIAConversation(userId) {
   return insert.insertId;
 }
 
-// Conversa entre usuários (ordem indiferente)
 async function getOrCreateUserConversation(userA, userB) {
   const u1 = Math.min(userA, userB);
   const u2 = Math.max(userA, userB);
@@ -186,7 +192,6 @@ async function getOrCreateUserConversation(userA, userB) {
     [u1, u2, u2, u1]
   );
   if (rows.length > 0) return rows[0].id;
-
   const [insert] = await pool.query(
     "INSERT INTO conversas (usuario1_id, usuario2_id, eh_ia) VALUES (?, ?, FALSE)",
     [u1, u2]
@@ -194,7 +199,6 @@ async function getOrCreateUserConversation(userA, userB) {
   return insert.insertId;
 }
 
-// Inserir mensagem
 async function inserirMensagem(conversaId, remetenteId, texto) {
   await pool.query(
     "INSERT INTO mensagens (conversa_id, remetente_id, texto) VALUES (?, ?, ?)",
@@ -202,7 +206,6 @@ async function inserirMensagem(conversaId, remetenteId, texto) {
   );
 }
 
-// Carregar mensagens
 async function carregarMensagens(conversaId) {
   const [rows] = await pool.query(
     "SELECT id, remetente_id, texto, enviada_em FROM mensagens WHERE conversa_id = ? ORDER BY enviada_em ASC",
@@ -215,7 +218,7 @@ async function carregarMensagens(conversaId) {
 /* Rotas base                                                          */
 /* ------------------------------------------------------------------ */
 app.get("/", (_, res) => {
-  res.send("API do ChatBox está online com conversas + Gemini 2.5");
+  res.send("API do ChatBox está online (conversas + Gemini 2.5)");
 });
 
 /* ---------------------- Autenticação / Usuários ------------------- */
@@ -225,14 +228,16 @@ app.post("/api/usuarios/google", async (req, res) => {
     return res.status(400).json({ error: "Dados incompletos" });
 
   try {
-    const [results] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
+    const [results] = await pool.query("SELECT * FROM users WHERE email = ?", [
+      email,
+    ]);
 
     if (results.length > 0) {
       const token = gerarToken(results[0].id);
       return res.status(200).json({ status: "login", user: results[0], token });
     }
 
-    // senha dummy
+    // senha dummy (schema exige NOT NULL)
     const hashed = await bcrypt.hash("google-user", 10);
     const [insertResult] = await pool.query(
       "INSERT INTO users (nome, email, senha, photo) VALUES (?, ?, ?, ?)",
@@ -253,12 +258,14 @@ app.post("/api/usuarios/register", async (req, res) => {
     return res.status(400).json({ error: "Todos os campos são obrigatórios" });
 
   try {
-    const [results] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
+    const [results] = await pool.query("SELECT * FROM users WHERE email = ?", [
+      email,
+    ]);
     if (results.length > 0)
       return res.status(400).json({ error: "Email já cadastrado" });
 
     const hashed = await bcrypt.hash(senha, 10);
-    const fotoFinal = photo || ""; // campo NOT NULL no schema
+    const fotoFinal = photo || "";
     const [insert] = await pool.query(
       "INSERT INTO users (nome, email, senha, photo) VALUES (?, ?, ?, ?)",
       [nome, email, hashed, fotoFinal]
@@ -281,7 +288,9 @@ app.post("/api/usuarios/login", async (req, res) => {
     return res.status(400).json({ error: "Email e senha obrigatórios" });
 
   try {
-    const [results] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
+    const [results] = await pool.query("SELECT * FROM users WHERE email = ?", [
+      email,
+    ]);
     if (results.length === 0)
       return res.status(404).json({ error: "Usuário não encontrado" });
 
@@ -312,13 +321,7 @@ app.get("/api/usuarios/me", autenticar, async (req, res) => {
   }
 });
 
-/* --------------------------- Conversas ----------------------------- */
-/**
- * Criar/obter conversa.
- * Body:
- *  - destinatarioId (obrigatório se eh_ia=false)
- *  - eh_ia (boolean)
- */
+/* -------------------- Conversas (multiuser + IA) ------------------ */
 app.post("/api/conversas", autenticar, async (req, res) => {
   const { destinatarioId, eh_ia } = req.body;
   const userId = req.usuarioId;
@@ -340,9 +343,6 @@ app.post("/api/conversas", autenticar, async (req, res) => {
   }
 });
 
-/**
- * Listar conversas do usuário autenticado
- */
 app.get("/api/conversas", autenticar, async (req, res) => {
   const userId = req.usuarioId;
   try {
@@ -387,9 +387,6 @@ app.get("/api/conversas", autenticar, async (req, res) => {
   }
 });
 
-/**
- * Buscar mensagens de uma conversa
- */
 app.get("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) => {
   const conversaId = Number(req.params.conversaId);
   const userId = req.usuarioId;
@@ -417,10 +414,6 @@ app.get("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) => 
   }
 });
 
-/**
- * Enviar mensagem numa conversa (usuário ou IA)
- * Body: { texto: string }
- */
 app.post("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) => {
   const conversaId = Number(req.params.conversaId);
   const userId = req.usuarioId;
@@ -430,10 +423,9 @@ app.post("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) =>
     return res.status(400).json({ error: "Texto obrigatório" });
 
   try {
-    const [convRows] = await pool.query(
-      "SELECT * FROM conversas WHERE id = ?",
-      [conversaId]
-    );
+    const [convRows] = await pool.query("SELECT * FROM conversas WHERE id = ?", [
+      conversaId,
+    ]);
     if (convRows.length === 0)
       return res.status(404).json({ error: "Conversa não encontrada" });
 
@@ -441,7 +433,6 @@ app.post("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) =>
     if (conversa.usuario1_id !== userId && conversa.usuario2_id !== userId)
       return res.status(403).json({ error: "Você não participa desta conversa." });
 
-    // mensagem do usuário
     await inserirMensagem(conversaId, userId, texto);
 
     let respostaIA = null;
@@ -459,9 +450,7 @@ app.post("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) =>
   }
 });
 
-/* ------------------------------------------------------------------ */
-/* Rotas legadas /api/chat  (compatibilidade com frontend antigo)     */
-/* ------------------------------------------------------------------ */
+/* -------------------- Rotas legadas /api/chat --------------------- */
 app.post("/api/chat", async (req, res) => {
   const { user_id, mensagem } = req.body;
   if (!user_id || !mensagem)
