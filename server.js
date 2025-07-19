@@ -2,20 +2,16 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
-import bcrypt from "bcryptjs"; // Use bcryptjs para compatibilidade com Node.js 20+
+import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { GoogleGenAI } from "@google/genai";
+// Mantido import do SDK, mas a função agora usa fetch direto.
+// import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
-/* ------------------------------------------------------------------ */
-/* App                                                                */
-/* ------------------------------------------------------------------ */
 const app = express();
 
-/* ------------------------------------------------------------------ */
-/* CORS robusto                                                        */
-/* ------------------------------------------------------------------ */
+/* ============================== CORS ============================== */
 const allowedOrigins = [
   process.env.FRONTEND_URL?.trim(),
   "http://localhost:5173",
@@ -24,10 +20,9 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Requests sem origin (curl, Postman) → permite
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true); // permite requests sem origin (ex: curl)
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    console.warn(`⚠️ Origin bloqueada pelo CORS: ${origin}`);
+    console.warn(`Origin bloqueada pelo CORS: ${origin}`);
     return callback(new Error(`Origin não permitida: ${origin}`));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -37,9 +32,8 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // responde preflight automaticamente
+app.options("*", cors(corsOptions));
 
-// Middleware defensivo: injeta cabeçalhos sempre (inclusive erros)
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.includes(origin)) {
@@ -63,9 +57,7 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-/* ------------------------------------------------------------------ */
-/* Pool MySQL                                                          */
-/* ------------------------------------------------------------------ */
+/* ============================== MySQL POOL ============================== */
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT) || 3306,
@@ -77,46 +69,55 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
-// Log inicial de conexão
 (async () => {
   try {
     const c = await pool.getConnection();
-    console.log("✅ Conectado ao banco MySQL.");
+    console.log("Conectado ao banco MySQL.");
     c.release();
   } catch (err) {
-    console.error("❌ Erro ao conectar ao banco:", err);
+    console.error("Erro ao conectar ao banco:", err);
   }
 })();
 
-/* ------------------------------------------------------------------ */
-/* Gemini IA                                                           */
-/* ------------------------------------------------------------------ */
-const IA_GEMINI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
+/* ============================== Gemini (fetch direto) ============================== */
 async function gerarRespostaGemini(pergunta) {
+  const MODEL = "gemini-1.5-flash"; // modelo estável
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+
+  const body = {
+    contents: [{ role: "user", parts: [{ text: pergunta }] }],
+  };
+
   try {
-    const response = await IA_GEMINI.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [{ role: "user", parts: [{ text: pergunta }] }],
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(25000),
     });
 
-    const parts =
-      response?.response?.candidates?.[0]?.content?.parts
-        ?.map((p) => p?.text)
-        .filter(Boolean) || [];
-    return (
-      parts.join("\n").trim() ||
-      "Sem resposta da IA no momento. Tente novamente mais tarde."
-    );
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error("Erro Gemini HTTP:", res.status, errText);
+      throw new Error(`Gemini HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    const text =
+      data?.candidates?.[0]?.content?.parts
+        ?.map((p) => p.text)
+        .filter(Boolean)
+        .join("\n")
+        .trim() || "Sem resposta processável.";
+
+    return text;
   } catch (error) {
     console.error("Erro na Gemini:", error);
     throw new Error("Erro ao gerar resposta com Gemini");
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* Usuário IA                                                          */
-/* ------------------------------------------------------------------ */
+/* ============================== Usuário IA ============================== */
 const AI_USER_EMAIL = process.env.AI_USER_EMAIL || "chatbox-ai@system.local";
 const AI_USER_NAME = process.env.AI_USER_NAME || "ChatBox AI";
 const AI_USER_PHOTO =
@@ -132,21 +133,18 @@ async function ensureAIUser() {
     AI_USER_ID = rows[0].id;
     return AI_USER_ID;
   }
-  // senha dummy como requerido pelo schema (NOT NULL)
   const hashed = await bcrypt.hash("ai-system", 10);
   const [insert] = await pool.query(
     "INSERT INTO users (nome, email, senha, photo) VALUES (?, ?, ?, ?)",
     [AI_USER_NAME, AI_USER_EMAIL, hashed, AI_USER_PHOTO]
   );
   AI_USER_ID = insert.insertId;
-  console.log(`✅ Usuário IA criado (id=${AI_USER_ID})`);
+  console.log(`Usuário IA criado (id=${AI_USER_ID})`);
   return AI_USER_ID;
 }
 ensureAIUser().catch((e) => console.error("Falha ao inicializar usuário IA:", e));
 
-/* ------------------------------------------------------------------ */
-/* JWT                                                                 */
-/* ------------------------------------------------------------------ */
+/* ============================== JWT / Auth ============================== */
 function gerarToken(usuarioId) {
   return jwt.sign({ id: usuarioId }, process.env.JWT_SECRET, {
     expiresIn: "2h",
@@ -165,9 +163,7 @@ function autenticar(req, res, next) {
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* Helpers de conversa                                                 */
-/* ------------------------------------------------------------------ */
+/* ============================== Helpers Conversas ============================== */
 async function getOrCreateIAConversation(userId) {
   const [rows] = await pool.query(
     "SELECT id FROM conversas WHERE usuario1_id = ? AND eh_ia = TRUE LIMIT 1",
@@ -214,14 +210,12 @@ async function carregarMensagens(conversaId) {
   return rows;
 }
 
-/* ------------------------------------------------------------------ */
-/* Rotas base                                                          */
-/* ------------------------------------------------------------------ */
+/* ============================== Rotas Base ============================== */
 app.get("/", (_, res) => {
-  res.send("API do ChatBox está online (conversas + Gemini 2.5)");
+  res.send("API do ChatBox online (conversas + Gemini)");
 });
 
-/* ---------------------- Autenticação / Usuários ------------------- */
+/* ============================== Rotas Usuários / Auth ============================== */
 app.post("/api/usuarios/google", async (req, res) => {
   const { nome, email, photo } = req.body;
   if (!nome || !email || !photo)
@@ -237,7 +231,6 @@ app.post("/api/usuarios/google", async (req, res) => {
       return res.status(200).json({ status: "login", user: results[0], token });
     }
 
-    // senha dummy (schema exige NOT NULL)
     const hashed = await bcrypt.hash("google-user", 10);
     const [insertResult] = await pool.query(
       "INSERT INTO users (nome, email, senha, photo) VALUES (?, ?, ?, ?)",
@@ -321,7 +314,7 @@ app.get("/api/usuarios/me", autenticar, async (req, res) => {
   }
 });
 
-/* -------------------- Conversas (multiuser + IA) ------------------ */
+/* ============================== Conversas ============================== */
 app.post("/api/conversas", autenticar, async (req, res) => {
   const { destinatarioId, eh_ia } = req.body;
   const userId = req.usuarioId;
@@ -450,7 +443,7 @@ app.post("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) =>
   }
 });
 
-/* -------------------- Rotas legadas /api/chat --------------------- */
+/* ============================== Rotas Legadas /api/chat ============================== */
 app.post("/api/chat", async (req, res) => {
   const { user_id, mensagem } = req.body;
   if (!user_id || !mensagem)
@@ -483,10 +476,18 @@ app.get("/api/chat/:userId", async (req, res) => {
   }
 });
 
-/* ------------------------------------------------------------------ */
-/* Start                                                              */
-/* ------------------------------------------------------------------ */
+/* ============================== Rota de Teste IA ============================== */
+app.get("/api/test-ia", async (req, res) => {
+  try {
+    const resposta = await gerarRespostaGemini("Diga olá com estilo.");
+    res.json({ ok: true, resposta });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ============================== Start ============================== */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
