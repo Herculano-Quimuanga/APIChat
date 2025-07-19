@@ -46,7 +46,7 @@ async function callGemini(prompt) {
 (async () => {
     try {
         console.log("➡️ Enviando prompt...");
-        const resposta = await callGemini("Resuma em uma frase o que é IA.");
+        const resposta = await callGemini("Olá bom dia.");
         console.log("✅ Resposta:", resposta);
     } catch (e) {
         console.error("❌ Falhou:", e.message);
