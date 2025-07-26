@@ -314,6 +314,19 @@ app.get("/api/usuarios/me", autenticar, async (req, res) => {
   }
 });
 
+/* ========================= Todos usuarios ====================== */
+app.get("/api/usuarios", autenticar, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, nome, email, photo FROM users WHERE id != ?",
+      [req.usuarioId]
+    );
+    res.status(200).json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "Erro ao listar usuários", details: err.message });
+  }
+});
+
 /* ============================== Conversas ============================== */
 app.post("/api/conversas", autenticar, async (req, res) => {
   const { destinatarioId, eh_ia } = req.body;
