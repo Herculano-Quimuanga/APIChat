@@ -4,32 +4,11 @@ import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-// Mantido import do SDK, mas a função agora usa fetch direto.
-// import { GoogleGenAI } from "@google/genai";
+import fetch from "node-fetch";
 
 dotenv.config();
 
 const app = express();
-
-/* ============================== CORS ============================== */
-const allowedOrigins = [
-  process.env.FRONTEND_URL?.trim(),
-  "http://localhost:5173",
-  "http://localhost:3000",
-].filter(Boolean);
-
-const corsOptions = {
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true); // permite requests sem origin (ex: curl)
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    console.warn(`Origin bloqueada pelo CORS: ${origin}`);
-    return callback(new Error(`Origin não permitida: ${origin}`));
-  },
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true,
-  optionsSuccessStatus: 200,
-};
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
@@ -57,6 +36,41 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+/* ============================== CORS CORRIGIDO ============================== */
+const allowedOrigins = [
+  process.env.FRONTEND_URL?.trim(),
+  "http://localhost:5173",
+  "http://localhost:3000",
+].filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn("Origin bloqueada pelo CORS:", origin);
+      callback(new Error("Origin não permitida"));
+    }
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.use(express.json());
+
+// ✅ Middleware para CORS manual (corrigido)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Credentials", "true");
+  }
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
 /* ============================== MySQL POOL ============================== */
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -71,17 +85,45 @@ const pool = mysql.createPool({
 
 (async () => {
   try {
-    const c = await pool.getConnection();
-    console.log("Conectado ao banco MySQL.");
-    c.release();
+    const conn = await pool.getConnection();
+    console.log("✅ Conectado ao MySQL");
+    conn.release();
   } catch (err) {
-    console.error("Erro ao conectar ao banco:", err);
+    console.error("❌ Erro ao conectar ao MySQL:", err.message);
+    process.exit(1);
   }
 })();
 
-/* ============================== Gemini (fetch direto) ============================== */
+/* ============================== JWT CORRIGIDO ============================== */
+function gerarToken(usuarioId) {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET não definido no .env");
+  }
+  return jwt.sign({ id: usuarioId }, process.env.JWT_SECRET, {
+    expiresIn: "2h",
+  });
+}
+
+function autenticar(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    console.warn("❌ Header Authorization ausente");
+    return res.status(401).json({ error: "Token ausente" });
+  }
+
+  const token = authHeader.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "Token não fornecido" });
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(403).json({ error: "Token inválido" });
+    req.usuarioId = decoded.id;
+    next();
+  });
+}
+
+/* ============================== Gemini API (fetch) ============================== */
 async function gerarRespostaGemini(pergunta) {
-  const MODEL = "gemini-1.5-flash"; // modelo estável
+  const MODEL = "gemini-1.5-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
   const body = {
@@ -93,75 +135,57 @@ async function gerarRespostaGemini(pergunta) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(25000),
     });
 
     if (!res.ok) {
-      const errText = await res.text();
-      console.error("Erro Gemini HTTP:", res.status, errText);
-      throw new Error(`Gemini HTTP ${res.status}`);
+      const erro = await res.text();
+      console.error("❌ Erro Gemini:", res.status, erro);
+      throw new Error("Erro ao gerar resposta IA");
     }
 
     const data = await res.json();
-    const text =
-      data?.candidates?.[0]?.content?.parts
-        ?.map((p) => p.text)
-        .filter(Boolean)
-        .join("\n")
-        .trim() || "Sem resposta processável.";
+    const texto = data?.candidates?.[0]?.content?.parts
+      ?.map((p) => p.text)
+      .filter(Boolean)
+      .join("\n")
+      .trim();
 
-    return text;
-  } catch (error) {
-    console.error("Erro na Gemini:", error);
-    throw new Error("Erro ao gerar resposta com Gemini");
+    return texto || "Sem resposta processável.";
+  } catch (err) {
+    console.error("❌ Erro na Gemini:", err.message);
+    return "Ocorreu um erro ao tentar responder.";
   }
 }
 
-/* ============================== Usuário IA ============================== */
-const AI_USER_EMAIL = process.env.AI_USER_EMAIL || "chatbox-ai@system.local";
-const AI_USER_NAME = process.env.AI_USER_NAME || "ChatBox AI";
-const AI_USER_PHOTO =
-  process.env.AI_USER_PHOTO || "https://via.placeholder.com/64?text=AI";
-
+/* ============================== Verificação do Usuário IA ============================== */
 let AI_USER_ID = null;
 
 async function ensureAIUser() {
   const [rows] = await pool.query("SELECT id FROM users WHERE email = ?", [
-    AI_USER_EMAIL,
+    process.env.AI_USER_EMAIL || "chatbox-ai@system.local",
   ]);
   if (rows.length > 0) {
     AI_USER_ID = rows[0].id;
-    return AI_USER_ID;
+    return;
   }
+
   const hashed = await bcrypt.hash("ai-system", 10);
   const [insert] = await pool.query(
     "INSERT INTO users (nome, email, senha, photo) VALUES (?, ?, ?, ?)",
-    [AI_USER_NAME, AI_USER_EMAIL, hashed, AI_USER_PHOTO]
+    [
+      process.env.AI_USER_NAME || "ChatBox AI",
+      process.env.AI_USER_EMAIL || "chatbox-ai@system.local",
+      hashed,
+      process.env.AI_USER_PHOTO || "https://via.placeholder.com/64?text=AI",
+    ]
   );
   AI_USER_ID = insert.insertId;
-  console.log(`Usuário IA criado (id=${AI_USER_ID})`);
-  return AI_USER_ID;
-}
-ensureAIUser().catch((e) => console.error("Falha ao inicializar usuário IA:", e));
-
-/* ============================== JWT / Auth ============================== */
-function gerarToken(usuarioId) {
-  return jwt.sign({ id: usuarioId }, process.env.JWT_SECRET, {
-    expiresIn: "2h",
-  });
+  console.log("✅ Usuário IA criado com ID:", AI_USER_ID);
 }
 
-function autenticar(req, res, next) {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.split(" ")[1];
-  if (!token) return res.status(401).json({ error: "Token ausente" });
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(403).json({ error: "Token inválido" });
-    req.usuarioId = decoded.id;
-    next();
-  });
-}
+ensureAIUser().catch((err) =>
+  console.error("❌ Falha ao criar usuário IA:", err.message)
+);
 
 /* ============================== Helpers Conversas ============================== */
 async function getOrCreateIAConversation(userId) {
