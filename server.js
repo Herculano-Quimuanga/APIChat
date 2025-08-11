@@ -33,15 +33,20 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(express.json());
 
-// ✅ Middleware para CORS manual (corrigido)
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.includes(origin)) {
     res.header("Access-Control-Allow-Origin", origin);
     res.header("Access-Control-Allow-Credentials", "true");
   }
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+  );
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+  );
   if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
@@ -134,10 +139,14 @@ async function gerarRespostaGemini(pergunta) {
 
 /* ============================== Verificação do Usuário IA ============================== */
 let AI_USER_ID = null;
+const AI_USER_NAME = process.env.AI_USER_NAME || "ChatBox AI";
+const AI_USER_EMAIL = process.env.AI_USER_EMAIL || "chatbox-ai@system.local";
+const AI_USER_PHOTO =
+  process.env.AI_USER_PHOTO || "https://via.placeholder.com/64?text=AI";
 
 async function ensureAIUser() {
   const [rows] = await pool.query("SELECT id FROM users WHERE email = ?", [
-    process.env.AI_USER_EMAIL || "chatbox-ai@system.local",
+    AI_USER_EMAIL,
   ]);
   if (rows.length > 0) {
     AI_USER_ID = rows[0].id;
@@ -147,12 +156,7 @@ async function ensureAIUser() {
   const hashed = await bcrypt.hash("ai-system", 10);
   const [insert] = await pool.query(
     "INSERT INTO users (nome, email, senha, photo) VALUES (?, ?, ?, ?)",
-    [
-      process.env.AI_USER_NAME || "ChatBox AI",
-      process.env.AI_USER_EMAIL || "chatbox-ai@system.local",
-      hashed,
-      process.env.AI_USER_PHOTO || "https://via.placeholder.com/64?text=AI",
-    ]
+    [AI_USER_NAME, AI_USER_EMAIL, hashed, AI_USER_PHOTO]
   );
   AI_USER_ID = insert.insertId;
   console.log("✅ Usuário IA criado com ID:", AI_USER_ID);
@@ -309,7 +313,9 @@ app.get("/api/usuarios/me", autenticar, async (req, res) => {
 
     res.status(200).json({ user: results[0] });
   } catch (err) {
-    res.status(500).json({ error: "Erro ao buscar usuário", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Erro ao buscar usuário", details: err.message });
   }
 });
 
@@ -322,7 +328,9 @@ app.get("/api/usuarios", autenticar, async (req, res) => {
     );
     res.status(200).json(rows);
   } catch (err) {
-    res.status(500).json({ error: "Erro ao listar usuários", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Erro ao listar usuários", details: err.message });
   }
 });
 
@@ -337,14 +345,16 @@ app.post("/api/conversas", autenticar, async (req, res) => {
       conversaId = await getOrCreateIAConversation(userId);
     } else {
       if (!destinatarioId)
-        return res
-          .status(400)
-          .json({ error: "destinatarioId obrigatório para conversa entre usuários." });
+        return res.status(400).json({
+          error: "destinatarioId obrigatório para conversa entre usuários.",
+        });
       conversaId = await getOrCreateUserConversation(userId, destinatarioId);
     }
     res.status(200).json({ conversaId });
   } catch (err) {
-    res.status(500).json({ error: "Erro ao criar/obter conversa", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Erro ao criar/obter conversa", details: err.message });
   }
 });
 
@@ -388,7 +398,9 @@ app.get("/api/conversas", autenticar, async (req, res) => {
 
     res.status(200).json(lista);
   } catch (err) {
-    res.status(500).json({ error: "Erro ao listar conversas", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Erro ao listar conversas", details: err.message });
   }
 });
 
@@ -415,7 +427,9 @@ app.get("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) => 
       }))
     );
   } catch (err) {
-    res.status(500).json({ error: "Erro ao carregar mensagens", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Erro ao carregar mensagens", details: err.message });
   }
 });
 
@@ -442,6 +456,7 @@ app.post("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) =>
 
     let respostaIA = null;
     if (conversa.eh_ia) {
+      if (!AI_USER_ID) await ensureAIUser();
       respostaIA = await gerarRespostaGemini(texto);
       await inserirMensagem(conversaId, AI_USER_ID, respostaIA);
     }
@@ -451,7 +466,9 @@ app.post("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) =>
       ia: conversa.eh_ia ? respostaIA : null,
     });
   } catch (err) {
-    res.status(500).json({ error: "Erro ao enviar mensagem", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Erro ao enviar mensagem", details: err.message });
   }
 });
 
@@ -468,7 +485,9 @@ app.post("/api/chat", async (req, res) => {
     await inserirMensagem(conversaId, AI_USER_ID, resposta);
     res.status(200).json({ resposta, conversaId });
   } catch (err) {
-    res.status(500).json({ error: "Erro ao gerar resposta com Gemini", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Erro ao gerar resposta com Gemini", details: err.message });
   }
 });
 
@@ -484,7 +503,9 @@ app.get("/api/chat/:userId", async (req, res) => {
     }));
     res.status(200).json(historico);
   } catch (err) {
-    res.status(500).json({ error: "Erro ao carregar histórico", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Erro ao carregar histórico", details: err.message });
   }
 });
 
