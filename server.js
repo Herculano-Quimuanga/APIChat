@@ -142,7 +142,7 @@ let AI_USER_ID = null;
 const AI_USER_NAME = process.env.AI_USER_NAME || "ChatBox AI";
 const AI_USER_EMAIL = process.env.AI_USER_EMAIL || "chatbox-ai@system.local";
 const AI_USER_PHOTO =
-  process.env.AI_USER_PHOTO || "https://via.placeholder.com/64?text=AI";
+  process.env.AI_USER_PHOTO || "/images/favicon.png";
 
 async function ensureAIUser() {
   const [rows] = await pool.query("SELECT id FROM users WHERE email = ?", [
