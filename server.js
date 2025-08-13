@@ -5,6 +5,8 @@ import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import fetch from "node-fetch";
+import { fileURLToPath } from "url";
+import path from "path";
 
 dotenv.config();
 
@@ -525,14 +527,16 @@ app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
 
-import path from "path";
-import { fileURLToPath } from "url";
-
+// 🔹 Configuração para servir o React no deploy
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-app.use(express.static(path.join(__dirname, "client/dist")));
+// caminho para a pasta "dist" (Vite) ou "build" (Create React App)
+const clientPath = path.join(__dirname, "client/dist"); // ajuste se a pasta for diferente
 
+app.use(express.static(clientPath));
+
+// 🔹 Fallback para qualquer rota do React
 app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "client/dist", "index.html"));
+  res.sendFile(path.join(clientPath, "index.html"));
 });
