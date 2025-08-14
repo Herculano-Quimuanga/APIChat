@@ -67,6 +67,13 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
+if (!pool) {
+  console.error("Falha ao conectar ao banco de dados. Verifique as variáveis de ambiente.");
+  process.exit(1);
+} else {
+  console.log("Conexão com o banco de dados estabelecida com sucesso.");
+}
+
 /* ============================== JWT ============================== */
 function gerarToken(usuarioId) {
   if (!process.env.JWT_SECRET) {
