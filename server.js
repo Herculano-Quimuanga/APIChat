@@ -10,6 +10,9 @@ import path from "path";
 
 dotenv.config();
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 
 /* ============================== CORS CORRIGIDO ============================== */
@@ -522,21 +525,14 @@ app.get("/api/test-ia", async (req, res) => {
 });
 
 /* ============================== Start ============================== */
+const clientPath = path.join(__dirname, "dist");
+app.use(express.static(clientPath));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(clientPath, "index.html"));
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
-});
-
-// 🔹 Configuração para servir o React no deploy
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// caminho para a pasta "dist" (Vite) ou "build" (Create React App)
-const clientPath = path.join(__dirname, "client/dist"); // ajuste se a pasta for diferente
-
-app.use(express.static(clientPath));
-
-// 🔹 Fallback para qualquer rota do React
-app.get("*", (req, res) => {
-  res.sendFile(path.join(clientPath, "index.html"));
 });
