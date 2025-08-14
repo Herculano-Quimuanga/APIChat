@@ -1,43 +1,41 @@
+// api/index.js (ESM, Vercel serverless)
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import fetch from "node-fetch";
-import { fileURLToPath } from "url";
-import path from "path";
 
+// No Vercel (Node 18+), use o fetch global. Removido node-fetch.
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 
-/* ============================== CORS CORRIGIDO ============================== */
+/* ============================== CORS ============================== */
+const FRONTEND_URL = (process.env.FRONTEND_URL || "").trim();
 const allowedOrigins = [
-  process.env.FRONTEND_URL?.trim(),
+  FRONTEND_URL,
   "http://localhost:5173",
   "http://localhost:3000",
 ].filter(Boolean);
 
 const corsOptions = {
   origin: (origin, callback) => {
+    // Em serverless, origin pode ser undefined em chamadas server-to-server
     if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.warn("Origin bloqueada pelo CORS:", origin);
-      callback(new Error("Origin não permitida"));
+      return callback(null, true);
     }
+    console.warn("Origin bloqueada pelo CORS:", origin);
+    return callback(null, false);
   },
   credentials: true,
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
 app.use(express.json());
 
+// Headers extras p/ preflight
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.includes(origin)) {
@@ -57,6 +55,7 @@ app.use((req, res, next) => {
 });
 
 /* ============================== MySQL POOL ============================== */
+// Em serverless, mantenha o pool em escopo global para reuso entre invocações.
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT) || 3306,
@@ -68,18 +67,7 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
-(async () => {
-  try {
-    const conn = await pool.getConnection();
-    console.log("✅ Conectado ao MySQL");
-    conn.release();
-  } catch (err) {
-    console.error("❌ Erro ao conectar ao MySQL:", err.message);
-    process.exit(1);
-  }
-})();
-
-/* ============================== JWT CORRIGIDO ============================== */
+/* ============================== JWT ============================== */
 function gerarToken(usuarioId) {
   if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET não definido no .env");
@@ -92,10 +80,8 @@ function gerarToken(usuarioId) {
 function autenticar(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
-    console.warn("❌ Header Authorization ausente");
     return res.status(401).json({ error: "Token ausente" });
   }
-
   const token = authHeader.split(" ")[1];
   if (!token) return res.status(401).json({ error: "Token não fornecido" });
 
@@ -106,11 +92,13 @@ function autenticar(req, res, next) {
   });
 }
 
-/* ============================== Gemini API (fetch) ============================== */
+/* ============================== Gemini API ============================== */
 async function gerarRespostaGemini(pergunta) {
   const MODEL = "gemini-1.5-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+  const API_KEY = process.env.GEMINI_API_KEY;
+  if (!API_KEY) return "Configuração da IA ausente.";
 
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
   const body = {
     contents: [{ role: "user", parts: [{ text: pergunta }] }],
   };
@@ -124,7 +112,7 @@ async function gerarRespostaGemini(pergunta) {
 
     if (!res.ok) {
       const erro = await res.text();
-      console.error("❌ Erro Gemini:", res.status, erro);
+      console.error("Erro Gemini:", res.status, erro);
       throw new Error("Erro ao gerar resposta IA");
     }
 
@@ -137,17 +125,23 @@ async function gerarRespostaGemini(pergunta) {
 
     return texto || "Sem resposta processável.";
   } catch (err) {
-    console.error("❌ Erro na Gemini:", err.message);
+    console.error("Erro na Gemini:", err.message);
     return "Ocorreu um erro ao tentar responder.";
   }
 }
 
-/* ============================== Verificação do Usuário IA ============================== */
+/* ============================== Usuário IA ============================== */
 let AI_USER_ID = null;
 const AI_USER_NAME = process.env.AI_USER_NAME || "ChatBox AI";
-const AI_USER_EMAIL = process.env.AI_USER_EMAIL || "chatbox-ai@system.local";
+
+// Foto da IA: usa variável, depois /images do front, senão placeholder
+const FRONT_CLEAN = FRONTEND_URL.replace(/\/$/, "");
 const AI_USER_PHOTO =
-  process.env.AI_USER_PHOTO || "/images/favicon.png";
+  process.env.AI_USER_PHOTO ||
+  (FRONT_CLEAN ? `${FRONT_CLEAN}/images/favicon.png` : "") ||
+  "https://via.placeholder.com/64?text=AI";
+
+const AI_USER_EMAIL = process.env.AI_USER_EMAIL || "chatbox-ai@system.local";
 
 async function ensureAIUser() {
   const [rows] = await pool.query("SELECT id FROM users WHERE email = ?", [
@@ -164,11 +158,12 @@ async function ensureAIUser() {
     [AI_USER_NAME, AI_USER_EMAIL, hashed, AI_USER_PHOTO]
   );
   AI_USER_ID = insert.insertId;
-  console.log("✅ Usuário IA criado com ID:", AI_USER_ID);
+  console.log("Usuário IA criado com ID:", AI_USER_ID);
 }
 
-ensureAIUser().catch((err) =>
-  console.error("❌ Falha ao criar usuário IA:", err.message)
+// Dispara uma vez por cold start (idempotente)
+await ensureAIUser().catch((err) =>
+  console.error("Falha ao garantir usuário IA:", err.message)
 );
 
 /* ============================== Helpers Conversas ============================== */
@@ -218,12 +213,12 @@ async function carregarMensagens(conversaId) {
   return rows;
 }
 
-/* ============================== Rotas Base ============================== */
+/* ============================== Rotas ============================== */
 app.get("/", (_, res) => {
-  res.send("API do ChatBox online (conversas + Gemini)");
+  res.json({ ok: true, message: "API do ChatBox online (Vercel)" });
 });
 
-/* ============================== Rotas Usuários / Auth ============================== */
+/* ---------- Auth / Users ---------- */
 app.post("/api/usuarios/google", async (req, res) => {
   const { nome, email, photo } = req.body;
   if (!nome || !email || !photo)
@@ -318,13 +313,10 @@ app.get("/api/usuarios/me", autenticar, async (req, res) => {
 
     res.status(200).json({ user: results[0] });
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erro ao buscar usuário", details: err.message });
+    res.status(500).json({ error: "Erro ao buscar usuário", details: err.message });
   }
 });
 
-/* ========================= Todos usuarios ====================== */
 app.get("/api/usuarios", autenticar, async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -333,13 +325,11 @@ app.get("/api/usuarios", autenticar, async (req, res) => {
     );
     res.status(200).json(rows);
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erro ao listar usuários", details: err.message });
+    res.status(500).json({ error: "Erro ao listar usuários", details: err.message });
   }
 });
 
-/* ============================== Conversas ============================== */
+/* ---------- Conversas ---------- */
 app.post("/api/conversas", autenticar, async (req, res) => {
   const { destinatarioId, eh_ia } = req.body;
   const userId = req.usuarioId;
@@ -357,9 +347,7 @@ app.post("/api/conversas", autenticar, async (req, res) => {
     }
     res.status(200).json({ conversaId });
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erro ao criar/obter conversa", details: err.message });
+    res.status(500).json({ error: "Erro ao criar/obter conversa", details: err.message });
   }
 });
 
@@ -403,9 +391,7 @@ app.get("/api/conversas", autenticar, async (req, res) => {
 
     res.status(200).json(lista);
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erro ao listar conversas", details: err.message });
+    res.status(500).json({ error: "Erro ao listar conversas", details: err.message });
   }
 });
 
@@ -432,9 +418,7 @@ app.get("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) => 
       }))
     );
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erro ao carregar mensagens", details: err.message });
+    res.status(500).json({ error: "Erro ao carregar mensagens", details: err.message });
   }
 });
 
@@ -471,13 +455,11 @@ app.post("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) =>
       ia: conversa.eh_ia ? respostaIA : null,
     });
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erro ao enviar mensagem", details: err.message });
+    res.status(500).json({ error: "Erro ao enviar mensagem", details: err.message });
   }
 });
 
-/* ============================== Rotas Legadas /api/chat ============================== */
+/* ---------- Rotas legadas /api/chat ---------- */
 app.post("/api/chat", async (req, res) => {
   const { user_id, mensagem } = req.body;
   if (!user_id || !mensagem)
@@ -490,9 +472,7 @@ app.post("/api/chat", async (req, res) => {
     await inserirMensagem(conversaId, AI_USER_ID, resposta);
     res.status(200).json({ resposta, conversaId });
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erro ao gerar resposta com Gemini", details: err.message });
+    res.status(500).json({ error: "Erro ao gerar resposta com Gemini", details: err.message });
   }
 });
 
@@ -508,31 +488,20 @@ app.get("/api/chat/:userId", async (req, res) => {
     }));
     res.status(200).json(historico);
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erro ao carregar histórico", details: err.message });
+    res.status(500).json({ error: "Erro ao carregar histórico", details: err.message });
   }
 });
 
-/* ============================== Rota de Teste IA ============================== */
-app.get("/api/test-ia", async (req, res) => {
+/* ---------- Healthcheck opcional ---------- */
+app.get("/api/health", async (_req, res) => {
   try {
-    const resposta = await gerarRespostaGemini("Diga olá com estilo.");
-    res.json({ ok: true, resposta });
+    const [r] = await pool.query("SELECT 1 as ok");
+    res.json({ ok: true, db: r[0]?.ok === 1 });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ ok: false, db: false, error: e.message });
   }
 });
 
-/* ============================== Start ============================== */
-const clientPath = path.join(__dirname, "dist");
-app.use(express.static(clientPath));
-
-app.get("*", (req, res) => {
-  res.sendFile(path.join(clientPath, "index.html"));
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
+/* ============================== Export p/ Vercel ============================== */
+// Não use app.listen no Vercel. Apenas exporte o app.
+export default app;
