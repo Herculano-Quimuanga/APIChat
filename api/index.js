@@ -467,6 +467,7 @@ app.post("/api/conversas/:conversaId/mensagens", autenticar, async (req, res) =>
 });
 
 /* ---------- Rotas legadas /api/chat ---------- */
+
 app.post("/api/chat", async (req, res) => {
   const { user_id, mensagem } = req.body;
   if (!user_id || !mensagem)
