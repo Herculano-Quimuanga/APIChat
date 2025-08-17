@@ -237,8 +237,10 @@ app.post("/api/usuarios/google", async (req, res) => {
     ]);
 
     if (results.length > 0) {
-      const token = gerarToken(results[0].id);
-      return res.status(200).json({ status: "login", user: results[0], token });
+      const user = results[0];
+      delete user.senha;  // remove hash da resposta
+      const token = gerarToken(user.id);
+      return res.status(200).json({ status: "login", user, token });
     }
 
     const hashed = await bcrypt.hash("google-user", 10);
